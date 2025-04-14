@@ -5,13 +5,12 @@ interface TimerProps {
   duration: number;
   onTimeout: () => void;
   isActive: boolean;
-  reset: boolean; // Thêm prop reset để reset thời gian
+  reset: boolean;
 }
 
 export function Timer({ duration, onTimeout, isActive, reset }: TimerProps) {
   const [timeLeft, setTimeLeft] = useState(duration);
 
-  // Reset thời gian khi prop reset thay đổi
   useEffect(() => {
     setTimeLeft(duration);
   }, [reset, duration]);

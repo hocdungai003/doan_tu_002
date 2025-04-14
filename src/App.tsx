@@ -1,36 +1,115 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { Trophy, Heart, Lightbulb, AlertCircle } from 'lucide-react';
 import { words } from './data/words';
-import { shuffleWord, getRandomWord, countSyllables } from './utils/game';
 import { Timer } from './components/Timer';
+
+type Word = {
+  readonly word: string;
+  readonly hint: string;
+};
+
+const initialWord = words.easy[Math.floor(Math.random() * words.easy.length)];
+
+// Hàm kiểm tra ký tự có dấu
+const hasDiacritic = (char: string) => {
+  return char.normalize('NFD').length > 1;
+};
 
 function App() {
   const [level, setLevel] = useState(1);
   const [score, setScore] = useState(0);
   const [lives, setLives] = useState(3);
   const [input, setInput] = useState('');
-  const [currentWord, setCurrentWord] = useState(getRandomWord(words, level));
-  const [scrambledWord, setScrambledWord] = useState('');
-  const [showHint, setShowHint] = useState(false);
+  const [currentWord, setCurrentWord] = useState<Word>(initialWord);
+  const [maskedWord, setMaskedWord] = useState('');
+  const [hintCount, setHintCount] = useState(0);
+  const [totalHintsUsed, setTotalHintsUsed] = useState(0);
+  const [revealedIndices, setRevealedIndices] = useState<number[]>([]);
   const [gameActive, setGameActive] = useState(true);
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [resetTimer, setResetTimer] = useState(false);
   const [advanceLevelTrigger, setAdvanceLevelTrigger] = useState(0);
   const [gameStarted, setGameStarted] = useState(false);
 
+  const getMaxHints = () => {
+    if (level <= 7) return 2; // Easy: 2 hints
+    if (level <= 14) return 3; // Medium: 3 hints
+    return 4; // Hard: 4 hints
+  };
+
+  const getTotalHints = () => {
+    return 20;
+  };
+
+  const maskWord = useCallback((word: string) => {
+    const chars = word.split('');
+    // Lọc các ký tự không có dấu và không phải khoảng trắng
+    const indices = chars
+      .map((char, index) => ({ char, index }))
+      .filter(({ char }) => !hasDiacritic(char) && char !== ' ')
+      .map(({ index }) => index);
+
+    // Tính số lượng cần ẩn (~70%, tối thiểu 1)
+    const hideCount = Math.max(1, Math.ceil(indices.length * 0.7));
+    const shuffled = [...indices].sort(() => Math.random() - 0.5);
+    const toHide = shuffled.slice(0, hideCount);
+
+    // Tạo masked word
+    const masked = chars.map((char, index) => 
+      toHide.includes(index) ? '_' : char
+    ).join('');
+
+    // Cập nhật chỉ số đã hiển thị
+    const initialRevealed = chars
+      .map((_, index) => index)
+      .filter(index => !toHide.includes(index));
+    setRevealedIndices(initialRevealed);
+
+    return masked;
+  }, []);
+
+  const revealHint = () => {
+    const maxHints = getMaxHints();
+    if (hintCount >= maxHints) return;
+
+    // Lấy các chỉ số có thể tiết lộ
+    const chars = currentWord.word.split('');
+    const indicesToHide = chars
+      .map((char, index) => ({ char, index }))
+      .filter(({ char }) => !hasDiacritic(char) && char !== ' ')
+      .map(({ index }) => index);
+
+    const availableIndices = indicesToHide.filter(i => !revealedIndices.includes(i));
+    if (availableIndices.length === 0) return;
+
+    const randomIndex = availableIndices[Math.floor(Math.random() * availableIndices.length)];
+    const newRevealed = [...revealedIndices, randomIndex];
+    setRevealedIndices(newRevealed);
+
+    // Cập nhật masked word
+    const newMasked = chars.map((char, i) => 
+      newRevealed.includes(i) ? char : maskedWord[i]
+    ).join('');
+
+    setMaskedWord(newMasked);
+    setHintCount(hintCount + 1);
+    setTotalHintsUsed(totalHintsUsed + 1);
+  };
+
   const startNewGame = useCallback(() => {
     setLevel(1);
     setScore(0);
     setLives(3);
-    setShowHint(false);
+    setHintCount(0);
+    setTotalHintsUsed(0);
     setGameActive(true);
     setMessage(null);
-    const newWord = getRandomWord(words, 1);
+    const newWord = words.easy[Math.floor(Math.random() * words.easy.length)];
     setCurrentWord(newWord);
-    setScrambledWord(shuffleWord(newWord.word));
+    setMaskedWord(maskWord(newWord.word));
     setInput('');
-    setResetTimer((prev) => !prev);
-  }, []);
+    setResetTimer(prev => !prev);
+  }, [maskWord]);
 
   const nextLevel = useCallback(() => {
     if (level >= 20) {
@@ -40,14 +119,16 @@ function App() {
     }
     const newLevel = level + 1;
     setLevel(newLevel);
-    const newWord = getRandomWord(words, newLevel);
+    const wordList = newLevel <= 7 ? words.easy : newLevel <= 14 ? words.medium : words.hard;
+    const newWord = wordList[Math.floor(Math.random() * wordList.length)];
     setCurrentWord(newWord);
-    setScrambledWord(shuffleWord(newWord.word));
+    setMaskedWord(maskWord(newWord.word));
     setInput('');
-    setShowHint(false);
+    setHintCount(0);
     setMessage(null);
     setResetTimer((prev) => !prev);
-  }, [level]);
+    setRevealedIndices([]);
+  }, [level, maskWord]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -71,7 +152,6 @@ function App() {
     }
   };
 
-  // Tự động ẩn thông báo "Chính xác! +10 điểm" sau 1 giây
   useEffect(() => {
     if (message?.type === 'success' && message?.text === 'Chính xác! +10 điểm') {
       const timer = setTimeout(() => {
@@ -81,7 +161,6 @@ function App() {
     }
   }, [message]);
 
-  // Xử lý chuyển màn khi advanceLevelTrigger thay đổi
   useEffect(() => {
     if (advanceLevelTrigger > 0) {
       const timer = setTimeout(() => {
@@ -91,6 +170,12 @@ function App() {
       return () => clearTimeout(timer);
     }
   }, [advanceLevelTrigger, nextLevel]);
+  
+  useEffect(() => {
+    if (gameStarted) {
+      setMaskedWord(maskWord(currentWord.word));
+    }
+  }, [currentWord.word, gameStarted, maskWord]);
 
   const handleTimeout = () => {
     setMessage({
@@ -100,21 +185,14 @@ function App() {
     setGameActive(false);
   };
 
-  // Hàm xử lý khi nhấn nút "Bắt đầu"
   const handleStartGame = () => {
     setGameStarted(true);
     startNewGame();
   };
 
-  // Tính số âm tiết mặc định
-  const syllableCount = gameStarted ? countSyllables(currentWord.word) : 0;
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50 flex items-center justify-center p-4 relative overflow-hidden">
-      {/* Background gradient chuyển động */}
       <div className="absolute inset-0 bg-gradient-to-r from-blue-200 to-purple-200 opacity-50 animate-gradient-shift"></div>
-
-      {/* Hiệu ứng particle (hạt trôi nổi) */}
       {[...Array(10)].map((_, i) => (
         <div
           key={i}
@@ -129,13 +207,11 @@ function App() {
           }}
         ></div>
       ))}
-
       <div className="bg-white rounded-xl shadow-2xl p-8 max-w-md w-full relative z-10 animate-container-bounce">
         {!gameStarted ? (
           <div className="text-center relative">
-            {/* Tiêu đề với hiệu ứng bounce từng ký tự */}
             <h2 className="text-3xl font-extrabold mb-4 text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-purple-600">
-              {Array.from("Ai Sẽ Là Vua Tiếng Việt Nhỉ?").map((char, index) => (
+              {Array.from("Đoán Chữ !?").map((char, index) => (
                 <span
                   key={index}
                   className="inline-block animate-bounce-char"
@@ -145,28 +221,20 @@ function App() {
                 </span>
               ))}
             </h2>
-
-            {/* Dòng mô tả với hiệu ứng sparkle */}
             <div className="relative">
               <p className="text-gray-600 mb-6 animate-fade-in-delayed">
                 Sẵn sàng thử thách trí tuệ của bạn chưa? Nhấn để bắt đầu!
               </p>
-              {/* Hiệu ứng sparkle xung quanh dòng mô tả */}
               <div className="absolute top-0 left-0 w-4 h-4 bg-yellow-300 rounded-full opacity-50 animate-sparkle"></div>
               <div className="absolute bottom-0 right-0 w-4 h-4 bg-yellow-300 rounded-full opacity-50 animate-sparkle-delayed"></div>
             </div>
-
-            {/* Nút "Bắt đầu" với hiệu ứng rotate, pulse, và glow khi hover */}
             <button
               onClick={handleStartGame}
               className="relative bg-gradient-to-r from-blue-600 to-purple-600 text-white py-3 px-6 rounded-lg hover:from-blue-700 hover:to-purple-700 transition-all duration-300 transform hover:scale-105 animate-pulse-shadow animate-slight-rotate group"
             >
               Bắt đầu
-              {/* Hiệu ứng glow khi hover */}
               <div className="absolute inset-0 rounded-lg bg-gradient-to-r from-blue-400 to-purple-400 opacity-0 group-hover:opacity-50 transition-opacity duration-300 animate-glow"></div>
             </button>
-
-            {/* Hiệu ứng bong bóng trôi nổi (tăng số lượng và thêm đổi màu) */}
             {[...Array(6)].map((_, i) => (
               <div
                 key={i}
@@ -190,24 +258,25 @@ function App() {
                 <span className="text-lg font-bold">{score}</span>
               </div>
               <div className="flex items-center gap-2">
+                <Lightbulb className="w-6 h-6 text-yellow-400" />
+                <span className="text-lg font-bold">{getTotalHints() - totalHintsUsed}</span>
+              </div>
+              <div className="flex items-center gap-2">
                 <Heart className="w-6 h-6 text-red-500" />
                 <span className="text-lg font-bold">{lives}</span>
               </div>
             </div>
-
             <div className="text-center mb-8">
               <h2 className="text-2xl font-bold mb-2">Màn {level}/20</h2>
               <Timer
-                duration={30}
+                duration={45}
                 onTimeout={handleTimeout}
                 isActive={gameActive}
                 reset={resetTimer}
               />
-            </div>
-
-            <div className="text-center mb-8">
+              <p className="text-lg mb-4 mt-4">{currentWord.hint}</p>
               <div className="flex justify-center gap-1 flex-wrap mb-4">
-                {Array.from(scrambledWord).map((char, index) => (
+                {Array.from(maskedWord).map((char, index) => (
                   <div
                     key={index}
                     className={`bg-blue-100 text-blue-800 font-bold text-lg rounded-md px-2 py-1 shadow-sm ${
@@ -218,34 +287,24 @@ function App() {
                   </div>
                 ))}
               </div>
-              <div className="text-sm text-gray-600 italic mb-2">
-                Gợi ý mặc định: {syllableCount === 1 ? 'Từ này' : 'Cụm này'} có {syllableCount} âm tiết
-              </div>
-              {showHint && (
-                <div className="text-sm text-gray-600 italic">
-                  Gợi ý: {currentWord.hint}
-                </div>
-              )}
             </div>
-
             <form onSubmit={handleSubmit} className="mb-6 flex gap-2">
               <input
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Nhập từ đúng..."
+                placeholder="Nhập đáp án..."
                 className="flex-1 px-4 py-2 rounded-lg border-2 border-blue-200 focus:border-blue-500 focus:outline-none"
                 disabled={!gameActive}
               />
               <button
                 type="submit"
                 className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:bg-gray-400"
-                disabled={!gameActive || !input.trim()} // Vô hiệu hóa nếu không có input hoặc game không active
+                disabled={!gameActive || !input.trim()}
               >
                 Gửi
               </button>
             </form>
-
             {message && (
               <div
                 className={`mb-6 p-3 rounded-lg text-center ${
@@ -259,7 +318,6 @@ function App() {
                 {message.text}
               </div>
             )}
-
             <div className="flex gap-4">
               {!gameActive && (
                 <button
@@ -269,17 +327,16 @@ function App() {
                   Chơi lại
                 </button>
               )}
-              {gameActive && !showHint && (
+              {gameActive && hintCount < getMaxHints() && (
                 <button
-                  onClick={() => setShowHint(true)}
+                  onClick={revealHint}
                   className="flex-1 flex items-center justify-center gap-2 bg-yellow-100 text-yellow-700 py-2 px-4 rounded-lg hover:bg-yellow-200 transition-colors"
                 >
                   <Lightbulb className="w-5 h-5" />
-                  Gợi ý
+                  Gợi ý ({getMaxHints() - hintCount} lần)
                 </button>
               )}
             </div>
-
             <div className="mt-6 text-center text-sm text-gray-500 flex items-center justify-center gap-2">
               <AlertCircle className="w-4 h-4" />
               Gõ tiếng Việt có dấu
